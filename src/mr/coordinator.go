@@ -16,6 +16,7 @@ type Coordinator struct {
 	JobDoneChan          chan bool
 	TaskChan             chan WorkRequest
 	TaskDoneChans        map[int32]chan WorkReply
+	TimeoutChans         map[int32]*time.Ticker
 	IntermediateWorkChan chan WorkReply
 	DsLock               sync.Mutex
 }
@@ -35,21 +36,28 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 func (c *Coordinator) GetWork(args *WorkerId, reply *WorkRequest) error {
 	request := <-c.TaskChan
 	*reply = request
-	//reply.TaskId = request.TaskId
-	//reply.nReduce = request.nReduce
-	//reply.Type = request.Type
-	//reply.nReduce = request.nReduce
-	//reply.ReduceBucketNo = request.ReduceBucketNo
-	//reply.InputFiles = request.InputFiles
 	log.Printf("Sent task %v to worker %d", reply, args.Id)
+	go func() {
+		time.Sleep(time.Second * 10)
+		c.DsLock.Lock()
+		timeoutchan, ok := c.TimeoutChans[request.TaskId]
+		c.DsLock.Unlock()
+		if ok {
+			timeoutchan.Reset(time.Second * 10)
+		}
+	}()
 	return nil
 }
 
 func (c *Coordinator) SubmitWork(args *WorkReply, reply *SubmitResponse) error {
 	log.Printf("got work submission %v", *args)
 	c.DsLock.Lock()
-	respChan := c.TaskDoneChans[args.TaskId]
+	respChan, ok := c.TaskDoneChans[args.TaskId]
 	c.DsLock.Unlock()
+	if !ok {
+		reply.Ok = false
+		return nil
+	}
 	respChan <- *args
 	reply.Ok = true
 	return nil
@@ -91,6 +99,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.JobDoneChan = make(chan bool, 1)
 	c.TaskChan = make(chan WorkRequest, 2*(nMap+nReduce))
 	c.TaskDoneChans = make(map[int32]chan WorkReply)
+	c.TimeoutChans = make(map[int32]*time.Ticker)
 	c.IntermediateWorkChan = make(chan WorkReply, nMap)
 
 	c.server()
@@ -99,9 +108,11 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 		taskHandler := func(task WorkRequest) {
 			var respChan chan WorkReply
-			c.DsLock.Lock()
 			respChan = make(chan WorkReply, 1)
+			ticker := time.NewTicker(time.Second * 1000000)
+			c.DsLock.Lock()
 			c.TaskDoneChans[task.TaskId] = respChan
+			c.TimeoutChans[task.TaskId] = ticker
 			c.DsLock.Unlock()
 			c.TaskChan <- task
 
@@ -111,9 +122,10 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 					c.IntermediateWorkChan <- res
 					c.DsLock.Lock()
 					delete(c.TaskDoneChans, task.TaskId)
+					delete(c.TimeoutChans, task.TaskId)
 					c.DsLock.Unlock()
 					return
-				case <-time.After(10 * time.Second):
+				case <-ticker.C:
 					log.Printf("Task %d timed out", task.TaskId)
 					c.TaskChan <- task
 				}
