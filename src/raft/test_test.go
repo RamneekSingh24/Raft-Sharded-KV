@@ -8,7 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	"log"
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -286,6 +289,7 @@ func TestFailAgree2B(t *testing.T) {
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
+	log.Printf("server %d was killed", (leader+1)%servers)
 
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
@@ -297,6 +301,7 @@ func TestFailAgree2B(t *testing.T) {
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
+	log.Printf("server %d was restarted", (leader+1)%servers)
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
@@ -504,6 +509,13 @@ func TestBackup2B(t *testing.T) {
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
+	go func() {
+		time.Sleep(time.Millisecond * 500)
+		log.Printf("printing raft state")
+		for _, rf := range cfg.rafts {
+			rf.PrintState()
+		}
+	}()
 
 	cfg.one(rand.Int(), servers, true)
 
@@ -514,7 +526,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 4) % servers)
 
 	// submit lots of commands that won't commit
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 1; i++ {
 		cfg.rafts[leader1].Start(rand.Int())
 	}
 
@@ -529,7 +541,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 4) % servers)
 
 	// lots of successful commands to new group.
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 1; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
 
@@ -542,7 +554,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect(other)
 
 	// lots more commands that won't commit
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 1; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
 
@@ -556,8 +568,13 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 
+	log.Printf("***** servers %d %d %d are back up and rest r down", (leader1+0)%servers, (leader1+1)%servers, other)
+	cfg.rafts[(leader1+0)%servers].PrintState()
+	cfg.rafts[(leader1+1)%servers].PrintState()
+	cfg.rafts[other%servers].PrintState()
+
 	// lots of successful commands to new group.
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 1; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
 
@@ -565,6 +582,8 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
 	}
+
+	log.Printf("all servers up")
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()

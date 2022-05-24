@@ -158,7 +158,6 @@ func ReduceTask(workRequest *WorkRequest, workSubmission *WorkReply,
 			}
 			intermediate = append(intermediate, kv)
 		}
-
 	}
 
 	sort.Sort(ByKey(intermediate))
