@@ -293,24 +293,28 @@ func (rf *Raft) AppendEntries(args *AppendEntriesRequest, reply *AppendEntriesRe
 	// Assuming leader has sent us all entries he has from his prev_index in continuous order
 
 	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
-	rf.commitIndex = args.LeaderCommitIndex
+	if args.LeaderCommitIndex > len(rf.log)-1 {
+		rf.commitIndex = len(rf.log) - 1
+	} else {
+		rf.commitIndex = args.LeaderCommitIndex
+	}
 	if len(args.Entries) != 0 {
 		log.Printf("server %d appended entires: %v, curr log: %v", rf.me, args.Entries, rf.log)
 	}
 	for rf.lastApplied < rf.commitIndex {
 		idx := rf.lastApplied + 1
 		log.Printf("server %d applied entry: %v", rf.me, rf.log[idx])
-		go func() {
-			rf.userApplyChan <- ApplyMsg{
-				CommandValid:  true,
-				Command:       rf.log[idx].Command,
-				CommandIndex:  rf.log[idx].Index + 1,
-				SnapshotValid: false,
-				Snapshot:      nil,
-				SnapshotTerm:  0,
-				SnapshotIndex: 0,
-			}
-		}()
+
+		rf.userApplyChan <- ApplyMsg{
+			CommandValid:  true,
+			Command:       rf.log[idx].Command,
+			CommandIndex:  rf.log[idx].Index + 1,
+			SnapshotValid: false,
+			Snapshot:      nil,
+			SnapshotTerm:  0,
+			SnapshotIndex: 0,
+		}
+
 		rf.lastApplied++
 	}
 	log.Printf("server %d: sending append entry reply: %v", rf.me, reply)
