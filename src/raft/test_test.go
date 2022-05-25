@@ -509,16 +509,16 @@ func TestBackup2B(t *testing.T) {
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
-	go func() {
-		for {
-			time.Sleep(time.Millisecond * 500)
-			log.Printf("printing raft state")
-			for _, rf := range cfg.rafts {
-				rf.PrintState()
-			}
-		}
-
-	}()
+	//go func() {
+	//	for {
+	//		time.Sleep(time.Millisecond * 500)
+	//		log.Printf("printing raft state")
+	//		for _, rf := range cfg.rafts {
+	//			rf.PrintState()
+	//		}
+	//	}
+	//
+	//}()
 
 	cfg.one(rand.Int(), servers, true)
 
@@ -571,7 +571,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 
-	log.Printf("***** servers %d %d %d are back up and rest r down", (leader1+0)%servers, (leader1+1)%servers, other)
+	// log.Printf("***** servers %d %d %d are back up and rest r down", (leader1+0)%servers, (leader1+1)%servers, other)
 	cfg.rafts[(leader1+0)%servers].PrintState()
 	cfg.rafts[(leader1+1)%servers].PrintState()
 	cfg.rafts[other%servers].PrintState()
@@ -586,7 +586,7 @@ func TestBackup2B(t *testing.T) {
 		cfg.connect(i)
 	}
 
-	log.Printf("all servers up")
+	// log.Printf("all servers up")
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()
@@ -1130,7 +1130,7 @@ func TestUnreliableChurn2C(t *testing.T) {
 const MAXLOGSIZE = 2000
 
 func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash bool) {
-	iters := 30
+	iters := 10
 	servers := 3
 	cfg := make_config(t, servers, !reliable, true)
 	defer cfg.cleanup()
