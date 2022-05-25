@@ -202,8 +202,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	log.Printf("Server %d received vote request: %v", rf.me, args)
-	defer rf.mu.Unlock()
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
@@ -300,15 +300,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesRequest, reply *AppendEntriesRe
 	for rf.lastApplied < rf.commitIndex {
 		idx := rf.lastApplied + 1
 		log.Printf("server %d applied entry: %v", rf.me, rf.log[idx])
-		rf.userApplyChan <- ApplyMsg{
-			CommandValid:  true,
-			Command:       rf.log[idx].Command,
-			CommandIndex:  rf.log[idx].Index + 1,
-			SnapshotValid: false,
-			Snapshot:      nil,
-			SnapshotTerm:  0,
-			SnapshotIndex: 0,
-		}
+		go func() {
+			rf.userApplyChan <- ApplyMsg{
+				CommandValid:  true,
+				Command:       rf.log[idx].Command,
+				CommandIndex:  rf.log[idx].Index + 1,
+				SnapshotValid: false,
+				Snapshot:      nil,
+				SnapshotTerm:  0,
+				SnapshotIndex: 0,
+			}
+		}()
 		rf.lastApplied++
 	}
 	log.Printf("server %d: sending append entry reply: %v", rf.me, reply)
@@ -457,6 +459,7 @@ func (rf *Raft) handleAppendEntry(successChan chan bool, server int, entry LogEn
 
 		if currentTerm != entry.Term || currentState != LEADER {
 			successChan <- false
+			rf.mu.Unlock()
 			return
 		}
 
@@ -464,7 +467,7 @@ func (rf *Raft) handleAppendEntry(successChan chan bool, server int, entry LogEn
 		prevLogIndex := -1
 		lastMatchIndex := rf.matchIndex[server]
 		if lastMatchIndex < -1 {
-			log.Fatalf("WTF DOG @ server %d, last match index of %d < -1", rf.me, server)
+			log.Fatalf("server %d, last match index of %d < -1", rf.me, server)
 		}
 		if lastMatchIndex >= 0 {
 			prevLogTerm = rf.log[lastMatchIndex].Term
@@ -539,9 +542,15 @@ func (rf *Raft) logEntryPublisher() {
 			log.Printf("Ignoring log entry: %v from previous term in our log", logEntry)
 			continue
 		}
-		Assert(currCommitIdx < logEntry.Index,
-			"stopping due to bug : about to publish log entry: %v, whose index is less than commit index: %d",
-			logEntry, currCommitIdx)
+
+		if currCommitIdx >= logEntry.Index {
+			// ignore
+			continue
+		}
+
+		//Assert(currCommitIdx < logEntry.Index,
+		//	"stopping due to bug : about to publish log entry: %v, whose index is less than commit index: %d,\n my log : %v",
+		//	logEntry, currCommitIdx, rf.log)
 
 		clusterLen := len(rf.peers)
 		requiredSucess := clusterLen/2 + 1

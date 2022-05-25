@@ -510,11 +510,14 @@ func TestBackup2B(t *testing.T) {
 
 	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
 	go func() {
-		time.Sleep(time.Millisecond * 500)
-		log.Printf("printing raft state")
-		for _, rf := range cfg.rafts {
-			rf.PrintState()
+		for {
+			time.Sleep(time.Millisecond * 500)
+			log.Printf("printing raft state")
+			for _, rf := range cfg.rafts {
+				rf.PrintState()
+			}
 		}
+
 	}()
 
 	cfg.one(rand.Int(), servers, true)
