@@ -363,35 +363,26 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(voteChan chan bool, server int, args *RequestVoteArgs) bool {
 	log.Printf("Server %d: Sending voteRequest %v to server %d", rf.me, *args, server)
-	doneChan := make(chan bool, 1)
 	reply := RequestVoteReply{}
-	go func() {
-		ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
-		doneChan <- ok
-	}()
 
-	select {
-	case ok := <-doneChan:
-		if !ok || !reply.VoteGranted {
-			voteChan <- false
-			if ok && reply.Term > args.Term {
-				// someone may have higher term than me
-				rf.mu.Lock()
-				if rf.currentTerm < reply.Term {
-					rf.currentTerm = reply.Term
-					rf.convertToFollower()
-				}
-				rf.mu.Unlock()
-			}
-		} else {
-			voteChan <- true
-		}
-		return ok
+	//atomic.AddInt32(&rf.rpcCount, 1)
+	ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
 
-	case <-time.After(time.Second):
+	if !ok || !reply.VoteGranted {
 		voteChan <- false
-		return false
+		if ok && reply.Term > args.Term {
+			// someone may have higher term than me
+			rf.mu.Lock()
+			if rf.currentTerm < reply.Term {
+				rf.currentTerm = reply.Term
+				rf.convertToFollower()
+			}
+			rf.mu.Unlock()
+		}
+	} else {
+		voteChan <- true
 	}
+	return ok
 
 }
 
@@ -488,7 +479,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesRequest, reply *AppendEntriesRe
 	for rf.lastApplied < rf.commitIndex {
 		idx := rf.lastApplied + 1 - rf.baseIndex
 		entry := rf.log[idx]
-		log.Printf("server %d applied entry: %v", rf.me, entry)
+		log.Printf("server %d: applied entry: %v", rf.me, entry)
 		userMsg := ApplyMsg{
 			CommandValid:  true,
 			Command:       entry.Command,
@@ -507,24 +498,31 @@ func (rf *Raft) sendAppendEntry(server int, args *AppendEntriesRequest, reply *A
 
 	log.Printf("server %d : sending append entry request to %d, %v", rf.me, server, args)
 
-	callDone := make(chan bool, 1)
-	rep := AppendEntriesReply{}
+	callDone := make(chan AppendEntriesReply, 1)
 
 	go func() {
+		//atomic.AddInt32(&rf.rpcCount, 1)
+		rep := AppendEntriesReply{}
 		ok := rf.peers[server].Call("Raft.AppendEntries", args, &rep)
-		callDone <- ok
+		if ok {
+			callDone <- rep
+		}
 	}()
-
-	select {
-	case ok := <-callDone:
-		if ok == true {
+	retryTime := rf.heartBeatTimeout
+	i := 1
+	for {
+		select {
+		case rep := <-callDone:
 			*reply = rep
 			log.Printf("server %d : received append entry reply from %d, %v", rf.me, server, reply)
+			return true
+		case <-time.After(retryTime * time.Duration(i)):
+			i++
+			log.Printf("sever %d: timedout on append entry reply from %d, %v", rf.me, server, args)
+			if i == 100 {
+				return false
+			}
 		}
-		return ok
-	case <-time.After(time.Second):
-		log.Printf("sever %d: timedout on append entry reply from %d, %v", rf.me, server, args)
-		return false
 	}
 }
 
@@ -533,6 +531,7 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	continuousFails := 0
 	for ok == false {
 		log.Printf("server %d : sending install snapshot request to %d, %v", rf.me, server, args)
+		//atomic.AddInt32(&rf.rpcCount, 1)
 		ok = rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 		if !ok {
 			continuousFails++
@@ -567,8 +566,8 @@ func (rf *Raft) checkReplyValidity(term int) bool {
 func (rf *Raft) committer() {
 	for {
 		idx := <-rf.commitCheckApplyChan
-		rf.mu.Lock()
 		log.Printf("Server %d: commiter got index: %d, matchindexes: %v", rf.me, idx, rf.matchIndex)
+		rf.mu.Lock()
 		if rf.currentState != LEADER {
 			// dont check and commit if not leader
 			rf.mu.Unlock()
@@ -600,10 +599,12 @@ func (rf *Raft) committer() {
 		if rf.log[ci].Term == rf.currentTerm {
 			// only update if found something from current term
 			rf.commitIndex = ci
+			log.Printf("server %d: updating commit index to %d", rf.me, rf.commitIndex)
 		}
 
 		rf.mu.Unlock()
 
+		log.Printf("server %d: going to apply dog", rf.me)
 		// apply entries
 
 		for rf.lastApplied < rf.commitIndex {
@@ -617,7 +618,7 @@ func (rf *Raft) committer() {
 				SnapshotTerm:  0,
 				SnapshotIndex: 0,
 			}
-			log.Printf("server %d: applied entry: %v", rf.me, entry)
+			//log.Printf("server %d: applied entry: %v, rpc count: %d", rf.me, entry, rf.rpcCount)
 			rf.lastApplied++
 		}
 	}
@@ -1041,9 +1042,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rand.Seed(time.Now().UnixNano())
 
-	rf.electionTimeout = time.Millisecond * 500
+	rf.electionTimeout = time.Millisecond * 250
 	rf.electionTimer = time.NewTicker(GetRandomTimeout(rf.electionTimeout))
-	rf.heartBeatTimeout = 200 * time.Millisecond
+	rf.heartBeatTimeout = 100 * time.Millisecond
 
 	rf.matchIndex = make([]int, len(peers))
 
@@ -1072,6 +1073,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist()
+
+	//rf.rpcCount = 0
 
 	go rf.ticker()
 	go rf.committer()
