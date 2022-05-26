@@ -90,8 +90,8 @@ type Raft struct {
 	commitIndex  int
 	lastApplied  int
 	leaderId     int
-	//nextIndex    []int     // stored locally in handlers
-	//matchIndex   []int
+	// nextIndex    []int // stored locally in handlers
+	matchIndex []int
 
 	electionTimeout          time.Duration
 	electionTimer            *time.Ticker
@@ -101,6 +101,8 @@ type Raft struct {
 	leaderDemoteNotifyChan   []chan int // term
 	newEntryAppendedChanSize int
 	newEntryAppendedChan     []chan int // index
+	commitCheckApplyChanSize int
+	commitCheckApplyChan     chan int // match index
 
 	baseIndex int
 	snapShot  []byte
@@ -225,6 +227,7 @@ type InstallSnapshotReply struct {
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	log.Fatalf("bug : shud not have called install snapshot")
 	if rf.killed() {
 		reply.Term = 0
 	}
@@ -283,14 +286,11 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 }
 
-func getRandomTimeout(timeout time.Duration) time.Duration {
-	return timeout + time.Duration(rand.Float64()*float64(timeout))
-}
-
 // RequestVote RPC handler
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.killed() {
 		reply.VoteGranted = false
+		reply.Term = 0
 		return
 	}
 	log.Printf("Server %d received vote request: %v", rf.me, args)
@@ -327,7 +327,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		rf.currentState = FOLLOWER
 		rf.persist(false)
-		rf.electionTimer.Reset(getRandomTimeout(rf.electionTimeout))
+		rf.electionTimer.Reset(GetRandomTimeout(rf.electionTimeout))
 		//log.Printf("Server %d voted for %d in term %d, reply: %v", rf.me, rf.votedFor, rf.currentTerm, reply)
 	}
 }
@@ -363,23 +363,36 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(voteChan chan bool, server int, args *RequestVoteArgs) bool {
 	log.Printf("Server %d: Sending voteRequest %v to server %d", rf.me, *args, server)
+	doneChan := make(chan bool, 1)
 	reply := RequestVoteReply{}
-	ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
-	if !ok || !reply.VoteGranted {
-		voteChan <- false
-		if ok && reply.Term > args.Term {
-			// someone may have higher term than me
-			rf.mu.Lock()
-			if rf.currentTerm < reply.Term {
-				rf.currentTerm = reply.Term
-				rf.convertToFollower()
+	go func() {
+		ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
+		doneChan <- ok
+	}()
+
+	select {
+	case ok := <-doneChan:
+		if !ok || !reply.VoteGranted {
+			voteChan <- false
+			if ok && reply.Term > args.Term {
+				// someone may have higher term than me
+				rf.mu.Lock()
+				if rf.currentTerm < reply.Term {
+					rf.currentTerm = reply.Term
+					rf.convertToFollower()
+				}
+				rf.mu.Unlock()
 			}
-			rf.mu.Unlock()
+		} else {
+			voteChan <- true
 		}
-	} else {
-		voteChan <- true
+		return ok
+
+	case <-time.After(time.Second):
+		voteChan <- false
+		return false
 	}
-	return ok
+
 }
 
 type AppendEntriesRequest struct {
@@ -399,7 +412,7 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesRequest, reply *AppendEntriesReply) {
 	if rf.killed() {
 		reply.Success = false
-		reply.Term = args.Term
+		reply.Term = 0
 		return
 	}
 
@@ -420,7 +433,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesRequest, reply *AppendEntriesRe
 	}
 	rf.leaderId = args.LeaderId
 	rf.currentState = FOLLOWER
-	rf.electionTimer.Reset(getRandomTimeout(rf.electionTimeout))
+	rf.electionTimer.Reset(GetRandomTimeout(rf.electionTimeout))
 
 	reply.Term = args.Term
 	reply.Success = false
@@ -490,22 +503,29 @@ func (rf *Raft) AppendEntries(args *AppendEntriesRequest, reply *AppendEntriesRe
 	}
 }
 
-func (rf *Raft) sendAppendEntry(server int, args *AppendEntriesRequest, reply *AppendEntriesReply) {
-	ok := false
-	continuousFails := 0
-	for ok == false {
-		log.Printf("server %d : sending append entry request to %d, %v", rf.me, server, args)
-		ok = rf.peers[server].Call("Raft.AppendEntries", args, reply)
-		if !ok {
-			continuousFails++
-			if continuousFails > 2 {
-				break
-			}
-			log.Printf("server %d : timedout on append entry reply from %d... retrying", rf.me, server)
-		}
-	}
-	log.Printf("server %d : received append entry reply from %d, %v", rf.me, server, reply)
+func (rf *Raft) sendAppendEntry(server int, args *AppendEntriesRequest, reply *AppendEntriesReply) bool {
 
+	log.Printf("server %d : sending append entry request to %d, %v", rf.me, server, args)
+
+	callDone := make(chan bool, 1)
+	rep := AppendEntriesReply{}
+
+	go func() {
+		ok := rf.peers[server].Call("Raft.AppendEntries", args, &rep)
+		callDone <- ok
+	}()
+
+	select {
+	case ok := <-callDone:
+		if ok == true {
+			*reply = rep
+			log.Printf("server %d : received append entry reply from %d, %v", rf.me, server, reply)
+		}
+		return ok
+	case <-time.After(time.Second):
+		log.Printf("sever %d: timedout on append entry reply from %d, %v", rf.me, server, args)
+		return false
+	}
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
@@ -544,8 +564,63 @@ func (rf *Raft) checkReplyValidity(term int) bool {
 }
 
 // assumes caller has lock
-func (rf *Raft) checkAndCommit(index int) {
+func (rf *Raft) committer() {
+	for {
+		idx := <-rf.commitCheckApplyChan
+		rf.mu.Lock()
+		log.Printf("Server %d: commiter got index: %d, matchindexes: %v", rf.me, idx, rf.matchIndex)
+		if rf.currentState != LEADER {
+			// dont check and commit if not leader
+			rf.mu.Unlock()
+			continue
+		}
+		if idx > rf.baseIndex+len(rf.log)-1 {
+			// deleted, got idx from an old term
+			rf.mu.Unlock()
+			continue
+		}
+		ci := rf.commitIndex
+		for ci < idx {
+			nextIndex := ci + 1
 
+			req := (len(rf.peers)/2 + 1) - 1
+			for i, _ := range rf.peers {
+				if i != rf.me {
+					if rf.matchIndex[i] >= nextIndex {
+						req--
+					}
+				}
+			}
+			if req <= 0 {
+				ci++
+			} else {
+				break
+			}
+		}
+		if rf.log[ci].Term == rf.currentTerm {
+			// only update if found something from current term
+			rf.commitIndex = ci
+		}
+
+		rf.mu.Unlock()
+
+		// apply entries
+
+		for rf.lastApplied < rf.commitIndex {
+			entry := rf.log[rf.lastApplied+1-rf.baseIndex]
+			rf.userApplyChan <- ApplyMsg{
+				CommandValid:  true,
+				Command:       entry.Command,
+				CommandIndex:  entry.Index,
+				SnapshotValid: false,
+				Snapshot:      nil,
+				SnapshotTerm:  0,
+				SnapshotIndex: 0,
+			}
+			log.Printf("server %d: applied entry: %v", rf.me, entry)
+			rf.lastApplied++
+		}
+	}
 }
 
 func (rf *Raft) appendEntryHandler(server int) {
@@ -563,6 +638,7 @@ func (rf *Raft) appendEntryHandler(server int) {
 		rf.mu.Lock()
 		matchIndex = 0 // reset match and next index
 		nextIndex = rf.baseIndex + len(rf.log) - 1
+		rf.matchIndex[server] = matchIndex
 		rf.mu.Unlock()
 		log.Printf("server %d: started hbting", rf.me)
 
@@ -577,6 +653,7 @@ func (rf *Raft) appendEntryHandler(server int) {
 			}
 			// for safety
 			matchIndex = Min(matchIndex, rf.baseIndex+len(rf.log)-1)
+			rf.matchIndex[server] = matchIndex
 			nextIndex = Min(nextIndex, rf.baseIndex+len(rf.log)-1)
 
 			Assert(matchIndex <= nextIndex, "match index %d > nextIndex %d",
@@ -602,7 +679,9 @@ func (rf *Raft) appendEntryHandler(server int) {
 					Entries:           entries,
 				}
 				reply := AppendEntriesReply{}
-				rf.sendAppendEntry(server, &req, &reply)
+				if !rf.sendAppendEntry(server, &req, &reply) {
+					continue
+				}
 				// check if iam still leader
 				rf.mu.Lock()
 				if !rf.checkReplyValidity(reply.Term) {
@@ -626,12 +705,15 @@ func (rf *Raft) appendEntryHandler(server int) {
 
 					rf.mu.Lock()
 					if !rf.checkReplyValidity(snapshotReply.Term) {
-						break
 						rf.mu.Unlock()
-						continue
+						break
 					}
 					// Snapshot install success
 					matchIndex = snapshotReq.BaseLogEntry.Index
+					if matchIndex > rf.matchIndex[server] {
+						rf.commitCheckApplyChan <- matchIndex
+					}
+					rf.matchIndex[server] = matchIndex
 					nextIndex = matchIndex + 1
 					rf.mu.Unlock()
 
@@ -640,13 +722,28 @@ func (rf *Raft) appendEntryHandler(server int) {
 					if len(req.Entries) > 0 {
 						matchIndex = req.Entries[len(req.Entries)-1].Index
 					}
+					if matchIndex > rf.matchIndex[server] {
+						rf.commitCheckApplyChan <- matchIndex
+					}
+					rf.matchIndex[server] = matchIndex
 					nextIndex = matchIndex + 1
 					rf.mu.Unlock()
 				}
 
 			} else {
-				// Note: Lock is already held
+				rf.mu.Unlock()
+
 				for nextIndex-matchIndex > 1 {
+					rf.mu.Lock()
+					// for safety
+					matchIndex = Min(matchIndex, rf.baseIndex+len(rf.log)-1)
+					rf.matchIndex[server] = matchIndex
+					nextIndex = Min(nextIndex, rf.baseIndex+len(rf.log)-1)
+
+					if (nextIndex - matchIndex) <= 1 {
+						rf.mu.Unlock()
+						break
+					}
 
 					if nextIndex <= rf.baseIndex {
 						// need to install snapshot
@@ -670,6 +767,10 @@ func (rf *Raft) appendEntryHandler(server int) {
 						// Snapshot install success
 						matchIndex = snapshotReq.BaseLogEntry.Index
 						nextIndex = matchIndex + 1
+						if matchIndex > rf.matchIndex[server] {
+							rf.commitCheckApplyChan <- matchIndex
+						}
+						rf.matchIndex[server] = matchIndex
 						rf.mu.Unlock()
 					} else {
 
@@ -685,8 +786,10 @@ func (rf *Raft) appendEntryHandler(server int) {
 						rf.mu.Unlock()
 
 						reply := AppendEntriesReply{}
-						rf.sendAppendEntry(server, &req, &reply)
 
+						if !rf.sendAppendEntry(server, &req, &reply) {
+							continue
+						}
 						rf.mu.Lock()
 
 						if !rf.checkReplyValidity(reply.Term) {
@@ -699,6 +802,10 @@ func (rf *Raft) appendEntryHandler(server int) {
 							if len(req.Entries) > 0 {
 								matchIndex = req.Entries[len(req.Entries)-1].Index
 							}
+							if matchIndex > rf.matchIndex[server] {
+								rf.commitCheckApplyChan <- matchIndex
+							}
+							rf.matchIndex[server] = matchIndex
 							nextIndex = matchIndex + 1
 						} else {
 							nextIndex--
@@ -734,7 +841,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 
-	//log.Printf("server %d received req: %v", rf.me, command)
+	log.Printf("server %d received req: %v", rf.me, command)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -818,7 +925,7 @@ func (rf *Raft) convertToFollower() {
 	log.Printf("Server %d converting to follower", rf.me)
 	rf.votedFor = -1
 	rf.leaderId = -1
-	rf.electionTimer.Reset(getRandomTimeout(rf.electionTimeout))
+	rf.electionTimer.Reset(GetRandomTimeout(rf.electionTimeout))
 	if rf.currentState == LEADER {
 		for i, _ := range rf.peers {
 			if i != rf.me {
@@ -856,7 +963,7 @@ func (rf *Raft) ticker() {
 			LastLogIndex: lastLogIndex,
 		}
 
-		rf.electionTimer.Reset(getRandomTimeout(rf.electionTimeout))
+		rf.electionTimer.Reset(GetRandomTimeout(rf.electionTimeout))
 
 		rf.mu.Unlock()
 
@@ -935,11 +1042,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rand.Seed(time.Now().UnixNano())
 
 	rf.electionTimeout = time.Millisecond * 500
-	rf.electionTimer = time.NewTicker(getRandomTimeout(rf.electionTimeout))
+	rf.electionTimer = time.NewTicker(GetRandomTimeout(rf.electionTimeout))
 	rf.heartBeatTimeout = 200 * time.Millisecond
+
+	rf.matchIndex = make([]int, len(peers))
 
 	rf.newEntryAppendedChanSize = 5000
 	rf.notifyChanLength = 1000
+	rf.commitCheckApplyChanSize = 5000
+
+	rf.commitCheckApplyChan = make(chan int, rf.commitCheckApplyChanSize)
 
 	rf.newEntryAppendedChan = make([]chan int, len(rf.peers))
 	rf.leaderPromoteNotifyChan = make([]chan int, len(rf.peers))
@@ -962,9 +1074,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist()
 
 	go rf.ticker()
+	go rf.committer()
+	//log.SetOutput(ioutil.Discard)
 
 	log.Printf("Initlized raft server %d %v", rf.me, rf)
 
-	//log.SetOutput(ioutil.Discard)
 	return rf
 }

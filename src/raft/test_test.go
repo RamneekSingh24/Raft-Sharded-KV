@@ -70,14 +70,16 @@ func TestReElection2A(t *testing.T) {
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
-	go func() {
-		log.Printf("printing state")
-		for _, rf := range cfg.rafts {
-			rf.PrintState()
-		}
-		time.Sleep(time.Millisecond * 200)
-	}()
-	time.Sleep(10 * time.Second)
+	//go func() {
+	//	for {
+	//		log.Printf("printing state")
+	//		for _, rf := range cfg.rafts {
+	//			rf.PrintState()
+	//		}
+	//		time.Sleep(time.Millisecond * 200)
+	//	}
+	//}()
+	//time.Sleep(10 * time.Second)
 	leader2 := cfg.checkOneLeader()
 	log.Printf("printing state")
 	for _, rf := range cfg.rafts {

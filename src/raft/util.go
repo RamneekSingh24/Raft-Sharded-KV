@@ -1,6 +1,10 @@
 package raft
 
-import "log"
+import (
+	"log"
+	"math/rand"
+	"time"
+)
 
 // Debugging
 const Debug = true
@@ -26,4 +30,8 @@ func Min(a int, b int) int {
 	} else {
 		return a
 	}
+}
+
+func GetRandomTimeout(timeout time.Duration) time.Duration {
+	return timeout + time.Duration(rand.Float64()*float64(timeout))
 }
