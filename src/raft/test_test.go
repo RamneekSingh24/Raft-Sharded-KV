@@ -70,14 +70,29 @@ func TestReElection2A(t *testing.T) {
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
+	go func() {
+		log.Printf("printing state")
+		for _, rf := range cfg.rafts {
+			rf.PrintState()
+		}
+		time.Sleep(time.Millisecond * 200)
+	}()
+	time.Sleep(10 * time.Second)
 	leader2 := cfg.checkOneLeader()
-
+	log.Printf("printing state")
+	for _, rf := range cfg.rafts {
+		rf.PrintState()
+	}
 	// if there's no quorum, no new leader should
 	// be elected.
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 
+	log.Printf("printing state")
+	for _, rf := range cfg.rafts {
+		rf.PrintState()
+	}
 	// check that the one connected server
 	// does not think it is the leader.
 	cfg.checkNoLeader()
