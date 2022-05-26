@@ -19,3 +19,11 @@ func Assert(expr bool, format string, a ...interface{}) {
 		}
 	}
 }
+
+func Min(a int, b int) int {
+	if b <= a {
+		return b
+	} else {
+		return a
+	}
+}
