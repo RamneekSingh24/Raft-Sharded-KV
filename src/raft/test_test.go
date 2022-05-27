@@ -8,10 +8,7 @@ package raft
 // test with the original before submitting.
 //
 
-import (
-	"log"
-	"testing"
-)
+import "testing"
 import "fmt"
 import "time"
 import "math/rand"
@@ -70,31 +67,14 @@ func TestReElection2A(t *testing.T) {
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
-	//go func() {
-	//	for {
-	//		log.Printf("printing state")
-	//		for _, rf := range cfg.rafts {
-	//			rf.PrintState()
-	//		}
-	//		time.Sleep(time.Millisecond * 200)
-	//	}
-	//}()
-	//time.Sleep(10 * time.Second)
 	leader2 := cfg.checkOneLeader()
-	log.Printf("printing state")
-	for _, rf := range cfg.rafts {
-		rf.PrintState()
-	}
+
 	// if there's no quorum, no new leader should
 	// be elected.
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 
-	log.Printf("printing state")
-	for _, rf := range cfg.rafts {
-		rf.PrintState()
-	}
 	// check that the one connected server
 	// does not think it is the leader.
 	cfg.checkNoLeader()
@@ -306,7 +286,6 @@ func TestFailAgree2B(t *testing.T) {
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
-	log.Printf("server %d was killed", (leader+1)%servers)
 
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
@@ -318,7 +297,6 @@ func TestFailAgree2B(t *testing.T) {
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
-	log.Printf("server %d was restarted", (leader+1)%servers)
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
@@ -497,8 +475,8 @@ func TestRejoin2B(t *testing.T) {
 
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
-	//cfg.rafts[leader1].Start(103)
-	//cfg.rafts[leader1].Start(104)
+	cfg.rafts[leader1].Start(103)
+	cfg.rafts[leader1].Start(104)
 
 	// new leader commits, also for index=2
 	cfg.one(103, 2, true)
@@ -526,16 +504,6 @@ func TestBackup2B(t *testing.T) {
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
-	//go func() {
-	//	for {
-	//		time.Sleep(time.Millisecond * 500)
-	//		log.Printf("printing raft state")
-	//		for _, rf := range cfg.rafts {
-	//			rf.PrintState()
-	//		}
-	//	}
-	//
-	//}()
 
 	cfg.one(rand.Int(), servers, true)
 
@@ -588,11 +556,6 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 
-	// log.Printf("***** servers %d %d %d are back up and rest r down", (leader1+0)%servers, (leader1+1)%servers, other)
-	cfg.rafts[(leader1+0)%servers].PrintState()
-	cfg.rafts[(leader1+1)%servers].PrintState()
-	cfg.rafts[other%servers].PrintState()
-
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
@@ -602,8 +565,6 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
 	}
-
-	// log.Printf("all servers up")
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()
@@ -946,8 +907,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	cfg.one(rand.Int()%10000, 1, true)
 
 	nup := servers
-	for iters := 0; iters < 1; iters++ {
-		if iters == 10 {
+	for iters := 0; iters < 1000; iters++ {
+		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
 		leader := -1
@@ -986,7 +947,6 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
-	time.Sleep(time.Second * 10)
 	cfg.one(rand.Int()%10000, servers, true)
 
 	cfg.end()
@@ -1148,7 +1108,7 @@ func TestUnreliableChurn2C(t *testing.T) {
 const MAXLOGSIZE = 2000
 
 func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash bool) {
-	iters := 5
+	iters := 30
 	servers := 3
 	cfg := make_config(t, servers, !reliable, true)
 	defer cfg.cleanup()
