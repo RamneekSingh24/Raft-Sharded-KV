@@ -101,6 +101,8 @@ type Raft struct {
 	commitCheckApplyChanSize int
 	commitCheckApplyChan     chan int // match index
 
+	heartBeatTicker []*time.Ticker
+
 	baseIndex int
 	snapShot  []byte
 
@@ -642,6 +644,7 @@ func (rf *Raft) appendEntryHandler(server int) {
 		rf.mu.Lock()
 		rf.matchIndex[server] = 0
 		rf.nextIndex[server] = rf.baseIndex + len(rf.log)
+		rf.heartBeatTicker[server].Reset(time.Microsecond * 500)
 		rf.mu.Unlock()
 
 		for rf.killed() == false {
@@ -649,6 +652,7 @@ func (rf *Raft) appendEntryHandler(server int) {
 			if term != rf.currentTerm {
 				break
 			}
+			<-rf.heartBeatTicker[server].C
 			go func(term int) {
 
 				if term != rf.currentTerm {
@@ -755,7 +759,7 @@ func (rf *Raft) appendEntryHandler(server int) {
 					}
 				}
 			}(term)
-			time.Sleep(rf.heartBeatTimeout)
+			rf.heartBeatTicker[server].Reset(rf.heartBeatTimeout)
 		}
 	}
 
@@ -801,6 +805,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	rf.log = append(rf.log, entry)
 	rf.persist(false)
+
+	for i, _ := range rf.peers {
+		if i != rf.me {
+			rf.heartBeatTicker[i].Reset(time.Microsecond * 300)
+		}
+	}
 
 	return index, term, isLeader
 }
@@ -973,10 +983,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitCheckApplyChan = make(chan int, rf.commitCheckApplyChanSize)
 
 	rf.leaderPromoteNotifyChan = make([]chan int, len(rf.peers))
+	rf.heartBeatTicker = make([]*time.Ticker, len(rf.peers))
 
 	for i, _ := range peers {
 		if i != me {
 			rf.leaderPromoteNotifyChan[i] = make(chan int, rf.notifyChanLength)
+			rf.heartBeatTicker[i] = time.NewTicker(time.Millisecond * 1)
+			rf.heartBeatTicker[i].Stop()
 			go rf.appendEntryHandler(i)
 		}
 	}

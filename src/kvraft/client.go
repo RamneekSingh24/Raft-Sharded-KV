@@ -1,13 +1,17 @@
 package kvraft
 
-import "6.824/labrpc"
+import (
+	"6.824/labrpc"
+	"log"
+	"sync/atomic"
+)
 import "crypto/rand"
 import "math/big"
-
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+	lastLeader int32
 }
 
 func nrand() int64 {
@@ -21,6 +25,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	ck.lastLeader = 0
+
 	return ck
 }
 
@@ -37,9 +43,22 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
-	// You will have to modify this function.
-	return ""
+	log.Printf("Clerk: got req get: %v", key)
+	for {
+		toSend := atomic.LoadInt32(&ck.lastLeader)
+		req := GetArgs{Key: key}
+		reply := GetReply{}
+		ok := ck.servers[toSend].Call("KVServer.Get", &req, &reply)
+		if ok {
+			if reply.Err == ErrWrongLeader {
+				nextToSend := (toSend + 1) % int32(len(ck.servers))
+				atomic.CompareAndSwapInt32(&ck.lastLeader, toSend, nextToSend)
+			} else {
+				log.Printf("Clerk: got get reply: key %v =  %v", key, reply.Value)
+				return reply.Value
+			}
+		}
+	}
 }
 
 //
@@ -53,12 +72,34 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// You will have to modify this function.
+	for {
+		toSend := atomic.LoadInt32(&ck.lastLeader)
+		req := PutAppendArgs{
+			Key:   key,
+			Value: value,
+			Op:    op,
+		}
+		reply := PutAppendReply{}
+		ok := ck.servers[toSend].Call("KVServer.PutAppend", &req, &reply)
+		if ok {
+			if reply.Err == ErrWrongLeader {
+				nextToSend := (toSend + 1) % int32(len(ck.servers))
+				atomic.CompareAndSwapInt32(&ck.lastLeader, toSend, nextToSend)
+			} else {
+				return
+			}
+		}
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
+	log.Printf("Clerk: got req: put %v = %v", key, value)
 	ck.PutAppend(key, value, "Put")
+	log.Printf("Clerk: put req done: put %v = %v", key, value)
 }
 func (ck *Clerk) Append(key string, value string) {
+	log.Printf("Clerk: got req: append %v, %v", key, value)
 	ck.PutAppend(key, value, "Append")
+	log.Printf("Clerk: apend req done: append %v, %v", key, value)
+
 }

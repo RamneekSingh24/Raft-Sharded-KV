@@ -18,11 +18,16 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+const (
+	GET    = 0
+	PUT    = 1
+	APPEND = 2
+)
 
 type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	Type int
+	Arg1 string
+	Arg2 string
 }
 
 type KVServer struct {
@@ -35,15 +40,55 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	indexReplyChans map[int]*chan string
+	kv              map[string]string
 }
 
-
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	raftCmd := Op{
+		Type: GET,
+		Arg1: args.Key,
+		Arg2: "",
+	}
+	kv.mu.Lock()
+	idx, _, isLeader := kv.rf.Start(raftCmd)
+	if isLeader == false {
+		reply.Err = ErrWrongLeader
+		kv.mu.Unlock()
+		return
+	} else {
+		ch := make(chan string, 5)
+		kv.indexReplyChans[idx] = &ch
+		kv.mu.Unlock()
+		val := <-ch
+		reply.Value = val
+		reply.Err = OK
+	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	opType := PUT
+	if args.Op == "Append" {
+		opType = APPEND
+	}
+	raftCmd := Op{
+		Type: opType,
+		Arg1: args.Key,
+		Arg2: args.Value,
+	}
+	kv.mu.Lock()
+	idx, _, isLeader := kv.rf.Start(raftCmd)
+	if isLeader == false {
+		reply.Err = ErrWrongLeader
+		kv.mu.Unlock()
+		return
+	} else {
+		ch := make(chan string, 5)
+		kv.indexReplyChans[idx] = &ch
+		kv.mu.Unlock()
+		<-ch
+		reply.Err = OK
+	}
 }
 
 //
@@ -65,6 +110,40 @@ func (kv *KVServer) Kill() {
 func (kv *KVServer) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
+}
+
+func (kv *KVServer) applyHandler() {
+	for kv.killed() == false {
+		applyMsg := <-kv.applyCh
+		if applyMsg.CommandValid {
+			idx := applyMsg.CommandIndex
+			reply := ""
+			op, _ := applyMsg.Command.(Op)
+			if op.Type == GET {
+				val, ok := kv.kv[op.Arg1]
+				if !ok {
+					val = ""
+				}
+				reply = val
+			} else if op.Type == PUT {
+				kv.kv[op.Arg1] = op.Arg2
+			} else {
+				oldVal, ok := kv.kv[op.Arg1]
+				if !ok {
+					oldVal = ""
+				}
+				kv.kv[op.Arg1] = oldVal + op.Arg2
+			}
+			kv.mu.Lock()
+			if ch, ok := kv.indexReplyChans[idx]; ok {
+				*ch <- reply
+				delete(kv.indexReplyChans, idx)
+			}
+			kv.mu.Unlock()
+		} else {
+			// TODO: snapshot
+		}
+	}
 }
 
 //
@@ -96,6 +175,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
-
+	kv.indexReplyChans = make(map[int]*chan string)
+	kv.kv = make(map[string]string)
+	go kv.applyHandler()
 	return kv
 }
