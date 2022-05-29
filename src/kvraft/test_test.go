@@ -1,6 +1,9 @@
 package kvraft
 
-import "6.824/porcupine"
+import (
+	"6.824/porcupine"
+	"log"
+)
 import "6.824/models"
 import "testing"
 import "strconv"
@@ -416,8 +419,9 @@ func GenericTestSpeed(t *testing.T, part string, maxraftstate int) {
 	const opsPerInterval = 3
 	const timePerOp = heartbeatInterval / opsPerInterval
 	if dur > numOps*timePerOp {
-		t.Fatalf("Operations completed too slowly %v/op > %v/op\n", dur/numOps, timePerOp)
+		t.Fatalf("Operations completed too slowly %v/op > %v/op\n", numOps/dur, timePerOp)
 	}
+	t.Logf("Operations per second %v", numOps/dur.Seconds())
 
 	cfg.end()
 }
@@ -492,6 +496,8 @@ func TestOnePartition3A(t *testing.T) {
 	ckp1 := cfg.makeClient(p1)  // connect ckp1 to p1
 	ckp2a := cfg.makeClient(p2) // connect ckp2a to p2
 	ckp2b := cfg.makeClient(p2) // connect ckp2b to p2
+
+	log.Printf("partitions created: p1 %v, :2 %v", p1, p2)
 
 	Put(cfg, ckp1, "1", "14", nil, -1)
 	check(cfg, t, ckp1, "1", "14")

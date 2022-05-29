@@ -4,6 +4,7 @@ import (
 	"6.824/labrpc"
 	"log"
 	"sync/atomic"
+	"time"
 )
 import "crypto/rand"
 import "math/big"
@@ -11,7 +12,9 @@ import "math/big"
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	lastLeader int32
+	lastLeader int
+	uuid       int64
+	reqNumber  int32
 }
 
 func nrand() int64 {
@@ -26,7 +29,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	// You'll have to add code here.
 	ck.lastLeader = 0
-
+	ck.uuid = nrand()
+	ck.reqNumber = 0
 	return ck
 }
 
@@ -42,22 +46,45 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 //
+
 func (ck *Clerk) Get(key string) string {
-	log.Printf("Clerk: got req get: %v", key)
-	for {
-		toSend := atomic.LoadInt32(&ck.lastLeader)
-		req := GetArgs{Key: key}
+
+	reqNo := atomic.AddInt32(&ck.reqNumber, 1)
+	req := GetArgs{
+		Key:           key,
+		ClientId:      ck.uuid,
+		RequestNumber: reqNo,
+	}
+
+	log.Printf("Clerk %v, reqno %v: sending req get: %v", req.ClientId, req.RequestNumber, req.Key)
+
+	doneChan := make(chan GetReply, 20)
+	sendReq := func(to int) {
+		//log.Printf("clerk %v, reqno %v, sending req to %d", req.ClientId, req.RequestNumber, to)
 		reply := GetReply{}
-		ok := ck.servers[toSend].Call("KVServer.Get", &req, &reply)
+		ok := ck.servers[to].Call("KVServer.Get", &req, &reply)
 		if ok {
-			if reply.Err == ErrWrongLeader {
-				nextToSend := (toSend + 1) % int32(len(ck.servers))
-				atomic.CompareAndSwapInt32(&ck.lastLeader, toSend, nextToSend)
-			} else {
-				log.Printf("Clerk: got get reply: key %v =  %v", key, reply.Value)
-				return reply.Value
-			}
+			doneChan <- reply
 		}
+	}
+	go sendReq(ck.lastLeader)
+
+	for {
+		select {
+		case getReply := <-doneChan:
+			if getReply.Err != OK {
+				ck.lastLeader = (ck.lastLeader + 1) % len(ck.servers)
+				go sendReq(ck.lastLeader)
+			} else {
+				log.Printf("Clerk %v, reqno %v: [got reply] got: %v = %v", req.ClientId, req.RequestNumber, req.Key, getReply.Value)
+				return getReply.Value
+			}
+
+		case <-time.After(time.Millisecond * 200):
+			ck.lastLeader = (ck.lastLeader + 1) % len(ck.servers)
+			go sendReq(ck.lastLeader)
+		}
+
 	}
 }
 
@@ -72,34 +99,50 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	for {
-		toSend := atomic.LoadInt32(&ck.lastLeader)
-		req := PutAppendArgs{
-			Key:   key,
-			Value: value,
-			Op:    op,
-		}
+	reqNo := atomic.AddInt32(&ck.reqNumber, 1)
+	req := PutAppendArgs{
+		Key:           key,
+		Value:         value,
+		Op:            op,
+		ClientId:      ck.uuid,
+		RequestNumber: reqNo,
+	}
+	log.Printf("Clerk %v, reqno %v: sending req: %v, %v, %v", req.ClientId, req.RequestNumber, op, key, value)
+	doneChan := make(chan PutAppendReply, 20)
+	sendReq := func(to int) {
+		//log.Printf("clerk %v, reqno %v, sending req to %d", req.ClientId, req.RequestNumber, to)
 		reply := PutAppendReply{}
-		ok := ck.servers[toSend].Call("KVServer.PutAppend", &req, &reply)
+		ok := ck.servers[to].Call("KVServer.PutAppend", &req, &reply)
+		//log.Printf("get reply(%v, %v) from to %d", ok, reply, to)
 		if ok {
-			if reply.Err == ErrWrongLeader {
-				nextToSend := (toSend + 1) % int32(len(ck.servers))
-				atomic.CompareAndSwapInt32(&ck.lastLeader, toSend, nextToSend)
+			doneChan <- reply
+		}
+	}
+
+	go sendReq(ck.lastLeader)
+
+	for {
+		select {
+		case getReply := <-doneChan:
+			if getReply.Err != OK {
+				ck.lastLeader = (ck.lastLeader + 1) % len(ck.servers)
+				go sendReq(ck.lastLeader)
 			} else {
+				log.Printf("Clerk %v, reqno %v:, %v, %v, %v, done", req.ClientId, req.RequestNumber, op, key, value)
 				return
 			}
+
+		case <-time.After(time.Millisecond * 200):
+			ck.lastLeader = (ck.lastLeader + 1) % len(ck.servers)
+			go sendReq(ck.lastLeader)
 		}
+
 	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	log.Printf("Clerk: got req: put %v = %v", key, value)
 	ck.PutAppend(key, value, "Put")
-	log.Printf("Clerk: put req done: put %v = %v", key, value)
 }
 func (ck *Clerk) Append(key string, value string) {
-	log.Printf("Clerk: got req: append %v, %v", key, value)
 	ck.PutAppend(key, value, "Append")
-	log.Printf("Clerk: apend req done: append %v, %v", key, value)
-
 }
