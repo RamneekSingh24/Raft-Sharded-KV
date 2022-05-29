@@ -6,8 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 )
-import "crypto/rand"
-import "math/big"
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
@@ -15,13 +13,6 @@ type Clerk struct {
 	lastLeader int
 	uuid       int64
 	reqNumber  int32
-}
-
-func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {

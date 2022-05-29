@@ -1,6 +1,10 @@
 package kvraft
 
-import "strconv"
+import (
+	"crypto/rand"
+	"math/big"
+	"strconv"
+)
 
 const (
 	OK             = "OK"
@@ -37,4 +41,11 @@ type GetReply struct {
 
 func termIndexToString(term int, index int) string {
 	return strconv.Itoa(term) + "." + strconv.Itoa(index)
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) << 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+	x := bigx.Int64()
+	return x
 }
