@@ -38,7 +38,7 @@ import (
 // in part 2D you'll want to send other kinds of messages (e.g.,
 // snapshots) on the applyCh, but set CommandValid to false for these
 // other uses.
-//
+//x
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
