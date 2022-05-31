@@ -1,6 +1,10 @@
 package raft
 
-import "log"
+import (
+	"log"
+	"math/rand"
+	"time"
+)
 
 // Debugging
 const Debug = true
@@ -18,4 +22,16 @@ func Assert(expr bool, format string, a ...interface{}) {
 			log.Fatalf(format, a...)
 		}
 	}
+}
+
+func Min(a int, b int) int {
+	if b <= a {
+		return b
+	} else {
+		return a
+	}
+}
+
+func GetRandomTimeout(timeout time.Duration) time.Duration {
+	return timeout + time.Duration(rand.Float64()*float64(timeout))
 }

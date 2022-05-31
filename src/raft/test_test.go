@@ -9,7 +9,6 @@ package raft
 //
 
 import (
-	"log"
 	"testing"
 )
 import "fmt"
@@ -289,7 +288,6 @@ func TestFailAgree2B(t *testing.T) {
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
-	log.Printf("server %d was killed", (leader+1)%servers)
 
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
@@ -301,7 +299,6 @@ func TestFailAgree2B(t *testing.T) {
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
-	log.Printf("server %d was restarted", (leader+1)%servers)
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
@@ -509,16 +506,6 @@ func TestBackup2B(t *testing.T) {
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
-	//go func() {
-	//	for {
-	//		time.Sleep(time.Millisecond * 500)
-	//		log.Printf("printing raft state")
-	//		for _, rf := range cfg.rafts {
-	//			rf.PrintState()
-	//		}
-	//	}
-	//
-	//}()
 
 	cfg.one(rand.Int(), servers, true)
 
@@ -571,11 +558,6 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
 
-	// log.Printf("***** servers %d %d %d are back up and rest r down", (leader1+0)%servers, (leader1+1)%servers, other)
-	cfg.rafts[(leader1+0)%servers].PrintState()
-	cfg.rafts[(leader1+1)%servers].PrintState()
-	cfg.rafts[other%servers].PrintState()
-
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
@@ -585,8 +567,6 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
 	}
-
-	// log.Printf("all servers up")
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()
@@ -827,11 +807,11 @@ func TestPersist32C(t *testing.T) {
 //
 // Test the scenarios described in Figure 8 of the extended Raft paper. Each
 // iteration asks a leader, if there is one, to insert a command in the Raft
-// log.  If there is a leader, that leader will fail quickly with a high
+// Log.  If there is a leader, that leader will fail quickly with a high
 // probability (perhaps without committing the command), or crash after a while
 // with low probability (most likey committing the command).  If the number of
 // alive servers isn't enough to form a majority, perhaps start a new server.
-// The leader in a new term may try to finish replicating log entries that
+// The leader in a new term may try to finish replicating Log entries that
 // haven't been committed yet.
 //
 func TestFigure82C(t *testing.T) {
@@ -1130,7 +1110,7 @@ func TestUnreliableChurn2C(t *testing.T) {
 const MAXLOGSIZE = 2000
 
 func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash bool) {
-	iters := 10
+	iters := 30
 	servers := 3
 	cfg := make_config(t, servers, !reliable, true)
 	defer cfg.cleanup()
@@ -1217,7 +1197,7 @@ func TestSnapshotInstallUnCrash2D(t *testing.T) {
 //
 // do the servers persist the snapshots, and
 // restart using snapshot along with the
-// tail of the log?
+// tail of the Log?
 //
 func TestSnapshotAllCrash2D(t *testing.T) {
 	servers := 3

@@ -1,6 +1,9 @@
 package kvraft
 
-import "6.824/labrpc"
+import (
+	"6.824/labrpc"
+	"log"
+)
 import "testing"
 import "os"
 
@@ -253,6 +256,7 @@ func (cfg *config) DisconnectClient(ck *Clerk, from []int) {
 
 // Shutdown a server by isolating it
 func (cfg *config) ShutdownServer(i int) {
+	log.Printf("**************** Shuttingdown server %d *************** ", i)
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
 
@@ -285,6 +289,7 @@ func (cfg *config) ShutdownServer(i int) {
 
 // If restart servers, first call ShutdownServer
 func (cfg *config) StartServer(i int) {
+	log.Printf("**************** Starting server %d *************** ", i)
 	cfg.mu.Lock()
 
 	// a fresh set of outgoing ClientEnd names.
