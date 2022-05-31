@@ -1,6 +1,9 @@
 package shardkv
 
-import "6.824/shardctrler"
+import (
+	"6.824/shardctrler"
+	"log"
+)
 import "6.824/labrpc"
 import "testing"
 import "os"
@@ -198,6 +201,7 @@ func (cfg *config) ShutdownGroup(gi int) {
 	for i := 0; i < cfg.n; i++ {
 		cfg.ShutdownServer(gi, i)
 	}
+	log.Printf("group %d shutdown", gi)
 }
 
 // start i'th server in gi'th group
@@ -317,6 +321,7 @@ func (cfg *config) joinm(gis []int) {
 		}
 		m[gid] = servernames
 	}
+	log.Printf("gids: %v joined", gis)
 	cfg.mck.Join(m)
 }
 

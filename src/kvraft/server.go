@@ -168,6 +168,9 @@ func (kv *KVServer) applyHandler() {
 		applyMsg := <-kv.applyCh
 
 		if applyMsg.CommandValid {
+			if applyMsg.CommandIndex == 0 {
+				continue
+			}
 			kv.snapShotLock.Lock()
 			op, _ := applyMsg.Command.(Op)
 			kv.lastApplied = applyMsg.CommandIndex
@@ -212,8 +215,8 @@ func (kv *KVServer) applyHandler() {
 
 			kv.mu.Lock()
 			waitChan, ok := kv.ReplyWaitChan[termIndexToString(applyMsg.CommandTerm, applyMsg.CommandIndex)]
-			kv.mu.Unlock()
 			if ok {
+				kv.mu.Unlock()
 				waitChan <- &InternalResp{
 					Reply: reply,
 					Valid: isValid,
@@ -221,7 +224,9 @@ func (kv *KVServer) applyHandler() {
 				}
 			} else {
 				delete(kv.ReplyWaitChan, termIndexToString(applyMsg.CommandTerm, applyMsg.CommandIndex))
+				kv.mu.Unlock()
 			}
+
 		} else {
 			kv.snapShotLock.Lock()
 			kv.loadSnapShot(applyMsg.Snapshot)
@@ -318,6 +323,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.loadSnapShot(persister.ReadSnapshot())
 
 	for _, entry := range kv.rf.Log {
+		if entry.Index == 0 {
+			continue
+		}
 		if entry.Index > kv.rf.LastApplied {
 			break
 		}

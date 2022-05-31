@@ -1,5 +1,11 @@
 package shardctrler
 
+import (
+	"crypto/rand"
+	"math/big"
+	"strconv"
+)
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -29,13 +35,17 @@ type Config struct {
 }
 
 const (
-	OK = "OK"
+	OK             = "OK"
+	ErrWrongLeader = "ErrWrongLeader"
+	ErrOldRequest  = "ErrOldRequest"
 )
 
 type Err string
 
 type JoinArgs struct {
-	Servers map[int][]string // new GID -> servers mappings
+	Servers       map[int][]string // new GID -> servers mappings
+	ClientId      int64
+	RequestNumber int32
 }
 
 type JoinReply struct {
@@ -44,7 +54,9 @@ type JoinReply struct {
 }
 
 type LeaveArgs struct {
-	GIDs []int
+	GIDs          []int
+	ClientId      int64
+	RequestNumber int32
 }
 
 type LeaveReply struct {
@@ -53,8 +65,10 @@ type LeaveReply struct {
 }
 
 type MoveArgs struct {
-	Shard int
-	GID   int
+	Shard         int
+	GID           int
+	ClientId      int64
+	RequestNumber int32
 }
 
 type MoveReply struct {
@@ -63,11 +77,24 @@ type MoveReply struct {
 }
 
 type QueryArgs struct {
-	Num int // desired config number
+	Num           int // desired config number
+	ClientId      int64
+	RequestNumber int32
 }
 
 type QueryReply struct {
 	WrongLeader bool
 	Err         Err
 	Config      Config
+}
+
+func nrand() int64 {
+	max := big.NewInt(int64(1) << 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+	x := bigx.Int64()
+	return x
+}
+
+func termIndexToString(term int, index int) string {
+	return strconv.Itoa(term) + "." + strconv.Itoa(index)
 }
